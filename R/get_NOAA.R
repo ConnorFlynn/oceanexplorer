@@ -4,19 +4,16 @@
 #'
 #' Functions to retrieve data from the
 #' [NOAA World Ocean Atlas](https://www.ncei.noaa.gov/products/world-ocean-atlas)
-#' . Data is an 3D array (longitude, latitude, and depth) and is loaded as a
+#' . Data is a 3D array (longitude, latitude, and depth) and is loaded as a
 #' [`stars`][stars::st_as_stars()] object. Check [`NOAA_data`] for available
-#' variables, respective units and their citations. The function can automatically
-#' cache the extracted files (default: `cache = FALSE`). The cached file will
+#' variables, respective units and their citations. The function can
+#' automatically cache the extracted files (default: `cache = FALSE`). The cached file will
 #' then reside in the package's `extdata` directory.
-#'
-#' @seealso [Introduction to the stars package](https://r-spatial.github.io/stars/articles/stars1.html)
 #'
 #' @param var The chemical or physical variable of interest (possible choices:
 #'  `"temperature"`, `"phosphate"`, `"nitrate"`, `"silicate"`, `"oxygen"`,
 #'  `"salinity"`, `"density"`).
-#' @param spat_res Spatial resolution, either 1 or 5 degree grid-cells (numeric)
-#'  .
+#' @param spat_res Spatial resolution, either 0.25, 1, or 5-degree grid-cells (numeric).
 #' @param av_period Temporal resolution, either `"annual"`, specific seasons
 #'  (e.g. `"winter"`), or month (e.g. `"August"`).
 #' @param cache Caching the extracted NOAA file in the package's `extdata`
@@ -39,7 +36,7 @@
 #' }
 get_NOAA <- function(var, spat_res, av_period, cache = FALSE) {
 
-  # abbreviate variable
+  # Abbreviate variable
   if (var == "silicate") {
     v <- strsplit(var, "")[[1]][2]
   } else if (var == "density") {
@@ -47,68 +44,63 @@ get_NOAA <- function(var, spat_res, av_period, cache = FALSE) {
   } else {
     v <- strsplit(var, "")[[1]][1]
   }
-  # stat to extract
-  if (spat_res < 5) {
-    # standard set to objectively analyzed climatology for variable of interest
-    stat <- paste(v, "an", sep = "_")
-  } else {
-    # standard set to Statistical mean for variable of interest
+
+  # Stat to extract
+  if (spat_res == 5) {
     stat <- paste(v, "mn", sep = "_")
+  } else {
+    stat <- paste(v, "an", sep = "_")
   }
 
-  # where is package
+  # Where is package
   pkg_path <- fs::path_package("oceanexplorer")
 
-  # path
+  # Path
   NOAA_path <- url_parser(var, spat_res, av_period, cache = cache)
 
   if (!"external" %in% names(NOAA_path)) {
-    # get data and make stars
+    # Get data and make stars object
     NOAA <- readRDS(fs::path(pkg_path, NOAA_path$local)) |> stars::st_as_stars()
   } else {
-    # get netcdf
+    # Get netcdf
     NOAA <- read_NOAA(NOAA_path$external, stat)
 
     if (isTRUE(cache)) {
-
-      # write stars object if extracted from NOAA server
-      # create dir
+      # Write stars object if extracted from NOAA server
+      # Create dir
       fs::dir_create(pkg_path, fs::path_dir(NOAA_path$local))
-      # create file
+      # Create file
       saveRDS(NOAA, fs::path(pkg_path, NOAA_path$local))
     }
   }
 
-  # return object
+  # Return object
   NOAA
 }
+
 #' @rdname get_NOAA
-#'
 #' @export
 url_parser <- function(var, spat_res, av_period, cache = FALSE) {
 
-  # temporal resolution
-  averaging_periods <- c("annual", month.name, "winter", "spring", "summer",
-                         "autumn")
+  # Temporal resolution
+  averaging_periods <- c("annual", month.name, "winter", "spring", "summer", "autumn")
   stopifnot(av_period %in% averaging_periods)
 
-  # base path to NCEI server
+  # Base path to NCEI server
   base_path <- "https://data.nodc.noaa.gov/thredds/dodsC/ncei/woa"
 
-  # grouped variables
+  # Grouped variables
   chem <- c("phosphate", "nitrate", "silicate", "oxygen")
   misc <- c("temperature", "salinity", "density")
 
-  # see https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DOC/woa18documentation.pdf
-  # for metadata names
-
-  # recording range
+  # Recording range
   if (var %in% chem) {
     deca <- "all"
   } else if (var %in% misc) {
     deca <- "decav"
   }
-  # abbreviate variable
+
+  # Abbreviate variable
   if (var == "silicate") {
     v <- strsplit(var, "")[[1]][2]
   } else if (var == "density") {
@@ -116,34 +108,44 @@ url_parser <- function(var, spat_res, av_period, cache = FALSE) {
   } else {
     v <- strsplit(var, "")[[1]][1]
   }
-  # averaging period
+
+  # Averaging period
   tp <- grep(av_period, averaging_periods, ignore.case = TRUE) - 1
   tp <- sprintf(fmt = "%02.0f", tp)
-  # grid-cell size
-  gr <- if(spat_res > 1) "5d" else "01"
-  # complete file name
+
+  # Grid-cell size
+  gr <- if (spat_res == 5) {
+    "5d"
+  } else if (spat_res == 1) {
+    "01"
+  } else {
+    "04" # Quarter-degree resolution
+  }
+
+  # Complete file name
   file <- paste0(paste("woa18", deca, paste0(v, tp), gr, sep = "_"), ".nc")
-  # complete file path
-  file_path <- paste(var, deca, if(spat_res > 1) "5deg" else "1.00", file,
-                     sep = "/")
+
+  # Complete file path
+  file_path <- paste(var, deca, if (spat_res == 5) "5deg" else if (spat_res == 1) "1.00" else "0.25", file, sep = "/")
 
   if (isTRUE(cache)) {
-    # where is package
+    # Where is package
     pkg_path <- fs::path_package("oceanexplorer")
-    # create extdata if not already existing
+    # Create extdata if not already existing
     if (!fs::dir_exists(fs::path(pkg_path, "extdata"))) {
       fs::dir_create(fs::path(pkg_path, "extdata"))
     }
   }
 
-  # check whether exist locally (respesting conventions for paths of the OS)
+  # Check whether the file exists locally
   local_path <- fs::path("extdata", fs::path_ext_remove(file_path), ext = "rds")
-  # if not exist make external path to server
+
+  # If not, create external path to server
   noaa_path <- try(fs::path_package("oceanexplorer", local_path), silent = TRUE)
   if (!inherits(noaa_path, "fs_path")) {
     external_path <- paste(base_path, file_path, sep = "/")
     pt <- list(external = external_path)
-    # caching also add local_path
+    # Caching also adds local_path
     if (isTRUE(cache)) {
       pt <- append(pt, list(local = local_path))
     }
@@ -153,50 +155,13 @@ url_parser <- function(var, spat_res, av_period, cache = FALSE) {
   }
 }
 
-#' List cached NOAA data files
-#'
-#' List all cached NOAA data files from package's `extdata` directory.
-#'
-#' @return A character vector containing the names of the files in the specified
-#'  directories (empty if there were no files). If a path does not exist or is
-#'  not a directory or is unreadable it is skipped.
-#' @export
-#'
-#' @examples
-#'
-#' # show cached NOAA files
-#' list_NOAA()
-#'
-list_NOAA <- function() {
-
-  # directory
-  cache_pkg <- try(
-    fs::path_package(package = "oceanexplorer", "extdata"),
-    silent = TRUE
-  )
-
-  if (inherits(cache_pkg, "try-error")) {
-   character(0)
-  } else {
-   # list files and delete them
-   list.files(cache_pkg, full.names = TRUE)
-  }
-}
-
-#-------------------------------------------------------------------------------
-# not exportet
-#-------------------------------------------------------------------------------
-clean_cache <- function(...) {
- list_NOAA() |> fs::file_delete()
-}
-
-# read the NOAA netcdf
+# Read the NOAA netcdf
 read_NOAA <- function(conn, var) {
 
-  # make connection
+  # Make connection
   nc <- RNetCDF::open.nc(conn)
 
-  # variable
+  # Variable
   lat <- RNetCDF::var.get.nc(nc, "lat")
   lon <- RNetCDF::var.get.nc(nc, "lon")
   depth <- RNetCDF::var.get.nc(nc, "depth")
@@ -205,7 +170,7 @@ read_NOAA <- function(conn, var) {
   depth_bnds <- RNetCDF::var.get.nc(nc, "depth_bnds")
   attr <- RNetCDF::var.get.nc(nc, var)
 
-  # close connection
+  # Close connection
   RNetCDF::close.nc(nc)
 
   st <- stars::st_as_stars(attr) |>
@@ -229,8 +194,32 @@ read_NOAA <- function(conn, var) {
       names = "depth"
     )
 
-  # variable name
+  # Variable name
   names(st) <- var
   st
 }
+
+#-------------------------------------------------------------------------------
+# Auxiliary functions
+#-------------------------------------------------------------------------------
+list_NOAA <- function() {
+
+  # Directory
+  cache_pkg <- try(
+    fs::path_package(package = "oceanexplorer", "extdata"),
+    silent = TRUE
+  )
+
+  if (inherits(cache_pkg, "try-error")) {
+    character(0)
+  } else {
+    # List files and delete them
+    list.files(cache_pkg, full.names = TRUE)
+  }
+}
+
+clean_cache <- function(...) {
+  list_NOAA() |> fs::file_delete()
+}
+
 
